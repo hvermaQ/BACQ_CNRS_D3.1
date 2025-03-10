@@ -9,30 +9,20 @@ features to add:
     2. samples on the next epsilon curve drawn near the last one
 """
 
-from qat.lang.AQASM import Program, H, X, CNOT, RX, I, RY, RZ, CSIGN #Gates
 from qat.core import Observable, Term, Batch #Hamiltonian
+from qat.qpus import get_default_qpu
+from qat.fermion import SpinHamiltonian
 import numpy as np
-#from qat.plugins import ScipyMinimizePlugin
-#import pickle
 from multiprocessing import Pool
+from circ_gen import gen_circ_HVA as gen_circ # import gen_circ_HVA if required
 import matplotlib.pyplot as plt
 
-#gateset for counting gates to introduce noise through Gaussian noise plugin
-one_qb_gateset = ['H', 'X', 'Y', 'Z', 'RX', 'RY', 'RZ']
-two_qb_gateset = ['CNOT', 'CSIGN']  
-#one_qb_gateset = ['H', 'RZ']
-#two_qb_gateset = ['CNOT'] 
-gateset = one_qb_gateset + two_qb_gateset
+from opto_gauss import Opto, GaussianNoise
 
-from qat.plugins import Junction
-from qat.core import Result
-from scipy.optimize import minimize
-from qat.core.plugins import AbstractPlugin
-from qat.fermion import SpinHamiltonian
-from qat.qpus import get_default_qpu
+plt.rcParams.update({'font.size': 16})  # Set global font size
 
 #problem initialization
-nqbts = 5 # number of qubits
+nqbts = 3 # number of qubits
 nruns = 0 # nbshots for observable sampling
 
 #Instantiation of Hamiltoniian
@@ -59,192 +49,6 @@ dep = np.arange(1, 11, 1, dtype = int)
 base_expo = [[1,6], [5,6], [1,5], [5,5], [1,4], [5,4], [1,3], [5,3], [1,2]]
 eps = [b[0]*(10**(-b[1])) for b in base_expo]
 
-#custom scipy optimization wrapper : Junction in Qaptiva
-
-class Opto(Junction):
-    def __init__(self, x0: np.ndarray = None, tol: float = 1e-8, maxiter: int = 25000, nbshots: int = 0,):
-        super().__init__(collective=False)
-        self.x0 = x0
-        self.maxiter = maxiter
-        self.nbshots = nbshots
-        self.n_steps = 0
-        self.energy_optimization_trace = []
-        self.parameter_map = None
-        self.energy = 0
-        self.energy_result = Result()
-        self.tol = tol
-        self.c_steps = 0
-        self.int_energy = []
-
-    def run(self, job, meta_data):
-        
-        if self.x0 is None:
-            self.x0 = 2*np.pi*np.random.rand(len(job.get_variables()))
-            self.parameter_map = {name: x for (name, x) in zip(job.get_variables(), self.x0)}
-
-        def compute_energy(x):
-            job_bound =  job(** {v: xx for (v, xx) in zip(job.get_variables(), x)})
-            self.energy = self.execute(job_bound)
-            self.energy_optimization_trace.append(self.energy.value)
-            self.n_steps += 1
-            return self.energy.value
-
-        def cback(intermediate_result):
-            #fn =  compute_energy(intermediate_result)
-            self.int_energy.append(intermediate_result.fun)
-            self.c_steps += 1
-            #return(fn)
-
-        bnd = (0, 2*np.pi)
-        bnds = tuple([bnd for i in range(len(job.get_variables()))])
-        #res = minimize(compute_energy, x0 = self.x0, method='L-BFGS-B', bounds = bnds, callback = cback , options={'ftol': self.tol, 'disp': False, 'maxiter': self.maxiter})
-        res = minimize(compute_energy, x0 = self.x0, method='COBYLA', bounds = bnds, options={'tol': self.tol, 'disp': False, 'maxiter': self.maxiter})
-        en = res.fun
-        self.parameter_map =  {v: xp for v, xp in zip(job.get_variables(), res.x)}
-        self.energy_result.value = en
-        self.energy_result.meta_data = {"optimization_trace": str(self.energy_optimization_trace), "n_steps": f"{self.n_steps}", "parameter_map": str(self.parameter_map), "c_steps" : f"{self.c_steps}", "int_energy": str(self.int_energy)}
-        return (Result(value = self.energy_result.value, meta_data = self.energy_result.meta_data))
-
-
-#custom gaussian noise plugin : Abstract plugin in qaptiva
-
-class GaussianNoise(AbstractPlugin,):
-    def __init__(self, p, hamiltonian_matrix):
-        self.p = p
-        self.hamiltonian_trace = np.trace(hamiltonian_matrix)/(np.shape(hamiltonian_matrix)[0])
-        self.unsuccess = 0
-        self.success = 0
-        self.nb_pauli_strings = 0
-        self.nbshots = 0
-    def compile(self, batch, _):
-        self.nbshots =  batch.jobs[0].nbshots
-        #nb_gates = batch.jobs[0].circuit.depth({'CNOT' : 2, 'RZ' : 1, 'H' : 1}, default = 1)
-        nb_gates = sum([batch.jobs[0].circuit.count(yt) for yt in gateset])
-        self.success = abs((1-self.p)**nb_gates)
-        self.unsuccess = (1-self.success)*self.hamiltonian_trace
-        return batch 
-    
-    def post_process(self, batch_result):
-        if batch_result.results[0].value is not None:
-            for result in batch_result.results:
-                if self.nbshots == 0:
-                    noise =  self.unsuccess
-                else: 
-                    noise =  np.random.normal(self.unsuccess, self.unsuccess/np.sqrt(self.nbshots))
-                result.value = self.success*result.value + noise
-        return batch_result
-
-#circuit generation using HVA
-#ct = number of layers
-def gen_circ_HVA(ct, nqbt):
-    #Variational circuit can only be constructed using the program framework
-    qprog = Program()
-    qbits = qprog.qalloc(nqbt)
-    #variational parameters used for generating gates (permutation of [odd/even, xx/yy/zz])
-    ao = [qprog.new_var(float, 'ao_%s'%i) for i in range(ct)]
-    bo = [qprog.new_var(float, 'bo_%s'%i) for i in range(ct)]
-    co = [qprog.new_var(float, 'co_%s'%i) for i in range(ct)]
-    ae = [qprog.new_var(float, 'ae_%s'%i) for i in range(ct)]
-    be = [qprog.new_var(float, 'be_%s'%i) for i in range(ct)]
-    ce = [qprog.new_var(float, 'ce_%s'%i) for i in range(ct)]
-    for q_index in range(nqbt):
-        X(qbits[q_index])
-    for q_index in range(nqbt):
-        if not q_index%2 and q_index <= nqbt-1:
-            H(qbits[q_index])
-    for q_index in range(nqbt):
-        if not q_index%2 and q_index <= nqbt-2:
-            CNOT(qbits[q_index],qbits[q_index+1])
-    for it in range(ct):
-        for q_index in range(nqbt): #odd Rzz
-            if q_index%2 and q_index <= nqbt-2:
-                CNOT(qbits[q_index],qbits[q_index+1])
-                RZ(ao[it-1]/2)(qbits[q_index+1])
-                CNOT(qbits[q_index],qbits[q_index+1])
-        for q_index in range(nqbt): #odd Ryy
-            if q_index%2 and q_index <= nqbt-2:
-                RZ(np.pi/2)(qbits[q_index])
-                RZ(np.pi/2)(qbits[q_index+1])
-                H(qbits[q_index])
-                H(qbits[q_index+1])
-                CNOT(qbits[q_index],qbits[q_index+1])
-                RZ(bo[it-1]/2)(qbits[q_index+1])
-                CNOT(qbits[q_index],qbits[q_index+1])
-                H(qbits[q_index])
-                H(qbits[q_index+1])
-                RZ(-np.pi/2)(qbits[q_index])
-                RZ(-np.pi/2)(qbits[q_index+1])
-        for q_index in range(nqbt): #odd Rxx
-            if q_index%2 and q_index <= nqbt-2:
-                H(qbits[q_index])
-                H(qbits[q_index+1])
-                CNOT(qbits[q_index],qbits[q_index+1])
-                RZ(co[it-1]/2)(qbits[q_index+1])
-                CNOT(qbits[q_index],qbits[q_index+1])
-                H(qbits[q_index])
-                H(qbits[q_index+1])
-        for q_index in range(nqbt): #even Rzz
-            if not q_index%2 and q_index <= nqbt-2:
-                CNOT(qbits[q_index],qbits[q_index+1])
-                RZ(ae[it-1]/2)(qbits[q_index+1])
-                CNOT(qbits[q_index],qbits[q_index+1])
-        for q_index in range(nqbt): #even Ryy
-            if not q_index%2 and q_index <= nqbt-2:
-                RZ(np.pi/2)(qbits[q_index])
-                RZ(np.pi/2)(qbits[q_index+1])
-                H(qbits[q_index])
-                H(qbits[q_index+1])
-                CNOT(qbits[q_index],qbits[q_index+1])
-                RZ(be[it-1]/2)(qbits[q_index+1])
-                CNOT(qbits[q_index],qbits[q_index+1])
-                H(qbits[q_index])
-                H(qbits[q_index+1])
-                RZ(-np.pi/2)(qbits[q_index])
-                RZ(-np.pi/2)(qbits[q_index+1])
-        for q_index in range(nqbt): #even Rxx
-            if not q_index%2 and q_index <= nqbt-2:
-                H(qbits[q_index])
-                H(qbits[q_index+1])
-                CNOT(qbits[q_index],qbits[q_index+1])
-                RZ(ce[it-1]/2)(qbits[q_index+1])
-                CNOT(qbits[q_index],qbits[q_index+1])
-                H(qbits[q_index])
-                H(qbits[q_index+1])
-    #circuit
-    circuit = qprog.to_circ()
-    return(circuit)
-
-#circuit generation for RYA ansatz
-#ct is the depth
-
-def gen_circ_RYA(ct, nqbt):
-    #Variational circuit can only be constructed using the program framework
-    qprog = Program()
-    qbits = qprog.qalloc(nqbt)
-    #variational parameters used for generating gates (permutation of [odd/even, xx/yy/zz])
-    #variational parameters used for generating gates
-    angs = [qprog.new_var(float, 'a_%s'%i) for i in range(nqbt*(2*ct+1))]
-    ang = iter(angs)
-    #circuit
-    for it in range(ct):
-        for q_index in range(nqbt):
-            RY(next(ang))(qbits[q_index])
-        for q_index in range(nqbt):
-            if not q_index%2 and q_index <= nqbt-2:
-                CSIGN(qbits[q_index],qbits[q_index+1])
-        for q_index in range(nqbt):
-            RY(next(ang))(qbits[q_index])
-        for q_index in range(nqbt):
-            if q_index%2 and q_index <= nqbt-2:
-                CSIGN(qbits[q_index],qbits[q_index+1])
-        CSIGN(qbits[0],qbits[nqbt-1])
-        if it==(ct-1):
-            for q_index in range(nqbt):
-                RY(next(ang))(qbits[q_index])
-    #circuit
-    circuit = qprog.to_circ()
-    return(circuit)
-
 optimizer = Opto()
 qpu_ideal = get_default_qpu()
 # Assuming stack.submit is a method, wrapper below avoiding any object instantitation
@@ -252,7 +56,7 @@ qpu_ideal = get_default_qpu()
 # i : dummy iterable
 def submit_job(args):
     lay, nq, F, i = args  # Unpack the arguments
-    circ = gen_circ_HVA(lay, nq)
+    circ = gen_circ(lay, nq)
     if F < 0:         
         stack = optimizer | qpu_ideal  # ideal stack
     else:
@@ -431,11 +235,11 @@ def plotting(eps_reached, eps_all, depth_all, obtained_minima, minima_depth, fit
 
     #plt.yscale('log')
     plt.xlabel(r"$N_{layers}$")
-    plt.ylabel(r"$E_\infty$")
+    plt.ylabel(r"$E_\text{VQE}$")
     #plt.plot(depth_reached, found_en, '*', color = 'blue'',label = 'actual_min')
     #plt.hlines(g_en + 0.1, 1, 6, 'm', linestyles = 'dashed')
-    plt.hlines(g_energy + tole, depth_all[0], depth_all[-1], 'm', linestyles = 'dashed', label = 'G.S +0.1')
-    plt.hlines(g_energy, depth_all[0], depth_all[-1], 'k', linestyles = 'dotted', label = 'G.S')
+    plt.hlines(g_energy + tole, depth_all[0], depth_all[-1], 'm', linestyles = 'dashed', label = r'$\delta + %.1f$'%tole)
+    plt.hlines(g_energy, depth_all[0], depth_all[-1], 'k', linestyles = 'dotted', label = r'$\delta$')
     plt.legend(bbox_to_anchor = (1,1))
     #plt.savefig("HVA_en_opt.pdf", bbox_inches = 'tight')
     plt.show()
@@ -443,8 +247,9 @@ def plotting(eps_reached, eps_all, depth_all, obtained_minima, minima_depth, fit
 #en_opt(nqbits, dep_list, n_samples, tol, err_rates, rds, tol_flag = False, *args)
 #code to generate result. Especially required for using multiprocessing correctly
 if __name__ == '__main__':
-    a, b, c, d, e = en_opt(nqbts, dep, 3, 0.1, eps, 5, False, g_energy)
-    plotting(a, eps, dep, b, c, d, 0.1)
+    set_tol = 0.1
+    a, b, c, d, e = en_opt(nqbts, dep, 3, set_tol, eps, 5, False, g_energy)
+    plotting(a, eps, dep, b, c, d, set_tol)
     if e == False:
         print("Given tolerance is viable!")
         print("Minimum error required for the given tolerance = %s"%a)
