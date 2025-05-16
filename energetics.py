@@ -8,6 +8,7 @@
 #3. Energetic efficiency
 
 import numpy as np
+from scipy.constants import hbar
 
 #gateset for counting gates
 one_qb_gateset = ['H', 'X', 'Y', 'Z', 'RX', 'RY', 'RZ']
@@ -29,13 +30,13 @@ class EnergeticAnalysis():
                 self.control_parameters = {
                     'Tqb' : 10**(-3), #qubit temperature in K,
                     'Text' : 300, #environment temperature in K
-                    'T1qb' : 50**(-9), #single qubit gate time in s
+                    'T1qb' : 50*10**(-9), #single qubit gate time in s
                     'Efac' : 1, #energetic ratio between single and two qubit gates 
                     'gamma' : 1, #spontaneous emission rate in kHz
                     'omega' : 6*10**9, #qubit frequency in Hz
                     'eta' : 0.3, #efficiency of the cryostat wrt carnot efficiency
                     'Adb' : 50 #attenuation in dB
-                    },
+                    }
         else:
             self.control_parameters = control_parameters
         self.run()
@@ -49,11 +50,11 @@ class EnergeticAnalysis():
         #insert algorithmic resources to hardware resources conversion
         #assume same energy consumption for single and two qubit gates
         #energy per gate in J
-        E_1qb = self.control_parameters['omega'] * (np.pi*np.pi)/(4*self.control_parameters['gamma']*self.control_parameters['T1qb'])
+        E_1qb = hbar*self.control_parameters['omega'] * (np.pi*np.pi)/(4*self.control_parameters['gamma']*self.control_parameters['T1qb'])
         #total heat evacuated
         Adb = self.control_parameters['Adb'] #attenuation in dB   
         A = 10**(Adb/10) #attenuation in scalar
-        Tqb = self.control_parameters['T_qb']
+        Tqb = self.control_parameters['Tqb']
         Text = self.control_parameters['Text']
         eta = self.control_parameters['eta']
         #dressed energy in J below
@@ -68,8 +69,11 @@ class EnergeticAnalysis():
         for rt in range(iters):
             Ng = self.count_gates(self.jobs[rt]) #number of gates
             t = int(self.results[rt].meta_data['n_steps']) #number of iterations
-            Ns = self.jobs[rt].nbshots #number of shots
-            Nm = len(self.jobs[rt].observable.terms) #number of measurements
+            if self.jobs[rt].nbshots == 0:
+                Ns = 1000 #default number of shots
+            else:
+                Ns = self.jobs[rt].nbshots
+            Nm = len(self.jobs[rt].observable.terms) #number of measurements naively
             E_algo = Ng * t * Ns * Nm #algorithmic energy consumption
             self.algorithmic_energy_consumption.append(E_algo)
 

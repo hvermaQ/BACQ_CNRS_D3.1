@@ -50,5 +50,11 @@ stack = optimizer | GaussianNoise(eps, heisen_mat) | qpu_ideal  # noisy stack
 jobb = circ.to_job(observable=heisen, nbshots=0)
 result = stack.submit(jobb)
 
+#importing the EnergeticAnalysis class
 from energetics import EnergeticAnalysis
-ress = EnergeticAnalysis([jobb], [result], [g_energy], hardware="Superconducting")
+#requires the ordered list of jobs, results and exact values
+#single job considered here for illustration
+ress = EnergeticAnalysis([jobb], [result], [g_energy], hardware="Superconducting", control_parameters=None)
+print("Algorithmic energy consumption in abstract units: ", ress.algorithmic_energy_consumption)
+print("Hardware energy consumption in Joules: ", ress.hardware_energy_consumption)
+print("Hardware Energetic efficiency = error/ hardware energy consumption: ", ress.energetic_efficiency)
