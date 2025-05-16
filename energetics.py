@@ -31,7 +31,6 @@ class EnergeticAnalysis():
                     'Tqb' : 10**(-3), #qubit temperature in K,
                     'Text' : 300, #environment temperature in K
                     'T1qb' : 50*10**(-9), #single qubit gate time in s
-                    'Efac' : 1, #energetic ratio between single and two qubit gates 
                     'gamma' : 1, #spontaneous emission rate in kHz
                     'omega' : 6*10**9, #qubit frequency in Hz
                     'eta' : 0.3, #efficiency of the cryostat wrt carnot efficiency
