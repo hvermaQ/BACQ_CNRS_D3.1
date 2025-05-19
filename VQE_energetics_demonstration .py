@@ -1,17 +1,14 @@
 #energy and efficiency estimator based on results from VQE
 # -*- coding: utf-8 -*-
 
-from qat.core import Observable, Term, Batch #Hamiltonian
-from qat.qpus import get_default_qpu
-from qat.fermion import SpinHamiltonian
-import numpy as np
-from multiprocessing import Pool
-from circ_gen import gen_circ_HVA as gen_circ # import gen_circ_RYA if required
-import matplotlib.pyplot as plt
+from qat.core import Observable, Term, Batch #import for Hamiltonian Contruction in myqlm
+from qat.qpus import get_default_qpu #deafult qpu for vqe
+from qat.fermion import SpinHamiltonian #additional import for Hamiltonian construction
+import numpy as np #numpy for calculations
+#from multiprocessing import Pool #optional for parallelization for large number of jobs
+from circ_gen import gen_circ_HVA as gen_circ # circuit generation function, can switch to other ansatz
 
-from opto_gauss import Opto, GaussianNoise
-
-plt.rcParams.update({'font.size': 16})  # Set global font size
+from opto_gauss import Opto, GaussianNoise #custom noise model and optimizer for noisy VQE simulation
 
 #problem initialization
 nqbts = 3 # number of qubits
@@ -30,10 +27,10 @@ heisen_mat = heisen_class.get_matrix()
 
 eigvals, eigvecs = np.linalg.eigh(heisen_mat)
 #ground state energy
-g_energy = eigvals[0]
-g_state = eigvecs[:,0]
+g_energy = eigvals[0] #ground state energy
+g_state = eigvecs[:,0] #ground state vector (optional)
 
-# range of depth available for interpolation
+# range of depth available for ansatz
 depth = 4
 
 # error rate in error model
@@ -47,7 +44,7 @@ qpu_ideal = get_default_qpu()
 circ = gen_circ(depth, nqbts)
 
 stack = optimizer | GaussianNoise(eps, heisen_mat) | qpu_ideal  # noisy stack
-jobb = circ.to_job(observable=heisen, nbshots=0)
+jobb = circ.to_job(observable=heisen, nbshots=nruns)
 result = stack.submit(jobb)
 
 #importing the EnergeticAnalysis class
