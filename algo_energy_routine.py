@@ -12,12 +12,12 @@ from scipy.constants import hbar, k
 
 #results in this case is a tuple (eps, Ng)
 class Convert_energy():
-    def __init__(self, results, noise_model='global', hardware="Superconducting", control_parameters=None):
+    def __init__(self, results, noise_model='local', hardware="Superconducting", control_parameters=None):
         self.hardware = hardware
         self.noise_model = noise_model
         self.noise_param = results[0]  # noise parameter (depolarizing rate)
         self.Ng = results[1]
-        print("Noise parameter: ", self.noise_param, " Number of gates: ", self.Ng)
+        #print("Noise parameter: ", self.noise_param, " Number of gates: ", self.Ng)
         self.hardware_energy_consumption = 0
         self.gate_infidelity = 0
         #initialization of the control parameters if not provided
@@ -48,6 +48,7 @@ class Convert_energy():
         Returns:
         float: Estimated energy cost in Joules based on superconducting hardware.
         """
+        #todo converversion betweem local and global noise models
         if self.noise_model == 'global':
             # Convert depolarizing rate to gate infidelity
             self.gate_infidelity = (1- (np.log10(1 - self.noise_param) / self.Ng))/2
@@ -81,12 +82,9 @@ class Convert_energy():
         n_ext = 1/((np.exp((hbar*omg)/(k*T_ext))-1)*A )
         # Energy per gate in J
         E_1qb = hbar * omg * (np.pi**2) * (1 + n_qb + n_ext) / (4 * self.gate_infidelity)
+        #print("Energy per gate in J: ", E_1qb)
         #dressed energy consumption for all gates
-        E_dressed = (T_ext - T_qb) * E_1qb * self.Ng / (self.control_parameters['eta'] * T_qb)
+        E_dressed = (T_ext - T_qb) * A * E_1qb * self.Ng / (self.control_parameters['eta'] * T_qb)
+        #print("Dressed energy consumption in J: ", E_dressed)
         self.hardware_energy_consumption = E_dressed
         return self.hardware_energy_consumption
-    
-
-    params = (10**-4, 100)
-ress = Convert_energy(params)
-ress.hardware_energy_consumption

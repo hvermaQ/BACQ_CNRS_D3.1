@@ -14,6 +14,7 @@ from qat.qpus import get_default_qpu
 from qat.fermion import SpinHamiltonian
 import numpy as np
 from multiprocessing import Pool
+from algo_energy_routine import Convert_energy  # Importing the Convert_energy class
 from circ_gen import gen_circ_HVA as gen_circ # import gen_circ_HVA if required
 import matplotlib.pyplot as plt
 
@@ -253,6 +254,11 @@ if __name__ == '__main__':
     if e == False:
         print("Given tolerance is viable!")
         print("Minimum error required for the given tolerance = %s"%a)
+        #use the parameters obtained to convert algorithmic resources to energy cost
+        #defaults using superconducting hardware and local depolarizing noise model
+        params = (a, c)
+        ress = Convert_energy(params, noise_model='local', hardware="Superconducting")
+        print("Estimated hardware energy consumption (Joules):", ress.hardware_energy_consumption)
     else:
         print("Given tolerance is unviable for given error range!")
     #a, b, c, d = sampled_curve(3, -1, d_lis, 5)
