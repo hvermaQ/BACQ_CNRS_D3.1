@@ -23,7 +23,7 @@ from opto_gauss import Opto, GaussianNoise
 plt.rcParams.update({'font.size': 16})  # Set global font size
 
 #problem initialization
-nqbts = 3 # number of qubits
+nqbts = 5 # number of qubits
 nruns = 0 # nbshots for observable sampling
 
 #Instantiation of Hamiltoniian
@@ -52,6 +52,15 @@ eps = [b[0]*(10**(-b[1])) for b in base_expo]
 
 optimizer = Opto()
 qpu_ideal = get_default_qpu()
+
+#gateset for counting gates
+one_qb_gateset = ['H', 'X', 'Y', 'Z', 'RX', 'RY', 'RZ']
+two_qb_gateset = ['CNOT', 'CSIGN']  
+gateset = one_qb_gateset + two_qb_gateset
+
+def count_gates(circ):
+    return sum([circ.count(yt) for yt in gateset])
+
 # Assuming stack.submit is a method, wrapper below avoiding any object instantitation
 # Wrapper function to handle multiple arguments for map
 # i : dummy iterable
@@ -256,7 +265,9 @@ if __name__ == '__main__':
         print("Minimum error required for the given tolerance = %s"%a)
         #use the parameters obtained to convert algorithmic resources to energy cost
         #defaults using superconducting hardware and local depolarizing noise model
-        params = (a, c)
+        opt_circ = gen_circ(c[0], nqbts)
+        n_gates = count_gates(opt_circ)
+        params = (a, n_gates)
         ress = Convert_energy(params, noise_model='local', hardware="Superconducting")
         print("Estimated hardware energy consumption (Joules):", ress.hardware_energy_consumption)
     else:
